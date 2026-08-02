@@ -67,7 +67,7 @@ More bootloaders may be added in future releases.
 Clone the repository
 
 ```bash
-git clone https://github.com/seba970423/intel-pstate-governor.git
+git clone https://github.com/seba970423/intel-pstate-governor-tool.git
 cd intel-pstate-governor
 ```
 
