@@ -68,7 +68,7 @@ Clone the repository
 
 ```bash
 git clone https://github.com/seba970423/intel-pstate-governor-tool.git
-cd intel-pstate-governor
+cd intel-pstate-governor-tool
 ```
 
 Preview everything without making changes
