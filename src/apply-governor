@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE="/etc/intel-pstate-governor.conf"
+
+if [[ ! -r "$CONFIG_FILE" ]]; then
+    echo "Missing configuration: $CONFIG_FILE" >&2
+    exit 1
+fi
+
+GOVERNOR=""
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
+
+if [[ -z "$GOVERNOR" || ! "$GOVERNOR" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Invalid GOVERNOR value in $CONFIG_FILE" >&2
+    exit 1
+fi
+
+found=0
+failed=0
+shopt -s nullglob
+
+for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+    [[ -d "$policy" ]] || continue
+    found=1
+
+    available_file="$policy/scaling_available_governors"
+    governor_file="$policy/scaling_governor"
+
+    if [[ ! -r "$available_file" || ! -w "$governor_file" ]]; then
+        printf 'Cannot access CPUFreq controls for %s\n' "$(basename "$policy")" >&2
+        failed=1
+        continue
+    fi
+
+    if ! grep -qw "$GOVERNOR" "$available_file"; then
+        printf '%s is unavailable for %s; available: %s\n' \
+            "$GOVERNOR" "$(basename "$policy")" "$(<"$available_file")" >&2
+        failed=1
+        continue
+    fi
+
+    printf '%s\n' "$GOVERNOR" > "$governor_file"
+done
+
+(( found )) || {
+    echo "No CPUFreq policy directories were found." >&2
+    exit 1
+}
+
+exit "$failed"

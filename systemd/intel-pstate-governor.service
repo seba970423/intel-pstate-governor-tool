@@ -1,0 +1,14 @@
+[Unit]
+Description=Apply the configured CPU frequency governor
+Documentation=https://github.com/seba970423/intel-pstate-governor
+ConditionPathExists=/sys/devices/system/cpu/cpufreq
+After=systemd-modules-load.service
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/intel-pstate-governor/apply-governor
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
