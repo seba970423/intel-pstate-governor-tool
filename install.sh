@@ -162,8 +162,22 @@ state_set PARAMETER_ADDED 0
 
 if [[ "$ADD_PARAMETER" == yes ]]; then
     add_kernel_parameter "$bootloader"
-    state_set PARAMETER_ADDED 1
-    log "Added $KERNEL_PARAMETER with $bootloader handler"
+
+    if [[ "$bootloader" == "refind" ]]; then
+        if [[ "$(state_get PARAMETER_ADDED 2>/dev/null || printf 0)" == 1 &&
+              -z "$(state_get BOOT_CONFIG_LIST 2>/dev/null || true)" ]]; then
+            die "rEFInd handler did not record its configuration files."
+        fi
+    elif [[ -z "$(state_get BOOT_CONFIG 2>/dev/null || true)" &&
+            "$bootloader" != "systemd-boot" ]]; then
+        die "Bootloader handler did not record the configuration path."
+    fi
+
+    if [[ "$(state_get PARAMETER_ADDED 2>/dev/null || printf 0)" == 1 ]]; then
+        log "Added $KERNEL_PARAMETER with $bootloader handler"
+    else
+        log "$KERNEL_PARAMETER was already present; no ownership was recorded"
+    fi
 fi
 
 write_governor_config
@@ -191,7 +205,9 @@ if [[ "$ADD_PARAMETER" == yes ]] && ! kernel_parameter_active; then
     info "A reboot is required for the kernel parameter to take effect."
     if confirm "Would you like to reboot now?"; then
         info "Rebooting..."
-        systemctl reboot
+        # The user has already explicitly confirmed the reboot.
+# Use -i to avoid GNOME session inhibitors blocking the reboot.
+systemctl reboot -i
         exit 0
     fi
     info "You can reboot later and then run ./status.sh to verify the result."

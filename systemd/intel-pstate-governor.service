@@ -1,6 +1,6 @@
 [Unit]
 Description=Apply the configured CPU frequency governor
-Documentation=https://github.com/seba970423/intel-pstate-governor
+Documentation=https://github.com/seba970423/intel-pstate-governor-tool
 ConditionPathExists=/sys/devices/system/cpu/cpufreq
 After=systemd-modules-load.service
 Before=multi-user.target

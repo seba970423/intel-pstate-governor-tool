@@ -1,229 +1,207 @@
-# Intel P-state Governor
+# Intel P-state Governor Tool
 
-A simple, interactive utility that configures Intel CPU frequency governors on Linux systems.
+A simple utility for Intel CPUs that automates switching the `intel_pstate` driver into **passive mode**, applies your preferred CPU frequency governor, and keeps it persistent across reboots.
 
-Instead of manually editing your bootloader, creating systemd services and changing CPU governors after every installation, this project automates the entire process while remaining fully reversible.
+Unlike manually editing bootloader files and system configuration, this tool detects the installed bootloader, configures it automatically, creates backups before making changes, and provides a clean uninstall process.
 
 ---
 
 ## Features
 
-- Interactive installer
-- Automatic Intel CPU detection
 - Automatic bootloader detection
-    - Limine
-    - GRUB
-    - systemd-boot
-- Optional `intel_pstate=passive` configuration
-- Runtime passive-mode switch (when supported)
-- Interactive governor selection
-- Automatic governor persistence through systemd
-- Safe uninstall
-- Bootloader backup before modifications
-- Dry-run mode
-- Status utility
-- Conflict detection (power-profiles-daemon, etc.)
-- Optional reboot prompt after install
-- Optional reboot prompt after uninstall
+  - Limine
+  - GRUB
+  - systemd-boot
+  - rEFInd
+- Adds or removes the `intel_pstate=passive` kernel parameter
+- Switches Intel P-state into passive mode
+- Lets you choose your preferred governor
+- Creates a systemd service that reapplies the governor at every boot
+- Creates backups before modifying bootloader configuration
+- Verifies changes during installation and uninstallation
+- Interactive installer and uninstaller
+- Includes a status utility to display the current CPU governor configuration
 
 ---
 
-## Why this project?
+## Supported Governors
 
-Many Linux users manually perform the following steps after every installation:
+The tool automatically detects which governors are available on your system.
 
-- add `intel_pstate=passive`
-- regenerate the bootloader configuration
-- switch governors
-- create a systemd service
-- remember how to undo everything later
+Examples:
 
-This utility automates the process safely while keeping every change reversible.
-
----
-
-## Supported hardware
-
-- Intel x86_64 CPUs
-- Linux
-- systemd
+- ondemand
+- schedutil
+- performance
+- powersave
+- conservative
+- userspace
 
 ---
 
-## Supported bootloaders
+## Supported Bootloaders
 
-Currently supported:
+The installer automatically detects and configures:
 
 - Limine
 - GRUB
-- systemd-boot (Type 1 entries)
+- systemd-boot
+- rEFInd
 
-More bootloaders may be added in future releases.
+No manual bootloader editing is required.
 
 ---
 
 ## Installation
 
-Clone the repository
+Clone the repository:
 
 ```bash
 git clone https://github.com/seba970423/intel-pstate-governor-tool.git
 cd intel-pstate-governor-tool
 ```
 
-Preview everything without making changes
-
-```bash
-sudo ./install.sh --dry-run
-```
-
-Install
+Run the installer:
 
 ```bash
 sudo ./install.sh
 ```
 
-The installer will guide you through the entire process.
+The installer will:
 
-Example:
-
-```
-Intel P-state Governor Setup
-
-CPU: Intel Core i5-8265U
-Driver: intel_pstate
-Governor: powersave
-
-Enable passive mode? [Y/n]
-
-Available governors
-
-1. ondemand
-2. schedutil
-3. performance
-4. powersave
-5. conservative
-
-Select governor:
-```
+- Detect your bootloader
+- Detect available governors
+- Ask which governor you want to use
+- Add the `intel_pstate=passive` kernel parameter (if needed)
+- Install the persistent systemd service
+- Create backups of modified bootloader configuration
+- Offer to reboot the system
 
 ---
 
 ## Status
 
-Check the current configuration
+You can check the current configuration at any time:
 
 ```bash
 ./status.sh
 ```
 
-Example output
+Example output:
 
 ```
 Intel P-state Governor Status
 
-Scaling driver:       intel_cpufreq
-Configured governor:  ondemand
-Active governor:      ondemand
-Available governors:  conservative ondemand performance powersave schedutil userspace
-intel_pstate mode:    passive
-Kernel parameter:     active
-Recorded bootloader:  limine
-Service enabled:      enabled
-Service active:       active
-
-[ OK ] The configured governor is active.
+Scaling driver:      intel_cpufreq
+Configured governor: ondemand
+Active governor:     ondemand
+intel_pstate mode:   passive
+Kernel parameter:    active
+Recorded bootloader: limine
+Service enabled:     enabled
+Service active:      active
 ```
 
 ---
 
-## Uninstall
+## Uninstallation
+
+Run:
 
 ```bash
 sudo ./uninstall.sh
 ```
 
-The uninstaller:
+The uninstaller will:
 
-- removes the service
-- removes the helper
-- restores the bootloader
-- removes the kernel parameter (if added by this project)
-- optionally reboots
+- Restore the original bootloader configuration
+- Remove the `intel_pstate=passive` kernel parameter (if it was added by the installer)
+- Remove the systemd service
+- Remove installed files
+- Verify the bootloader configuration
+- Offer to reboot
 
 ---
 
-## Dry-run
+## Requirements
 
-Preview every action without changing your system.
+- Intel CPU
+- Linux with systemd
+- Root privileges
+- Supported bootloader
+
+---
+
+## Notes
+
+This tool only manages Intel P-state passive mode.
+
+It does **not**:
+
+- modify CPU frequencies manually
+- overclock your processor
+- disable turbo boost
+- change BIOS settings
+
+---
+
+## Tested On
+
+Desktop Environments
+
+- KDE Plasma
+- GNOME
+
+Bootloaders
+
+- Limine
+- GRUB
+- systemd-boot
+- rEFInd
+
+Distributions
+
+- CachyOS
+
+CPU Families
+
+- Intel Core i5-8265U
+- Intel Core i5-10400
+
+---
+
+## Troubleshooting
+
+### The selected governor is unavailable
+
+Your system is probably still using the `intel_pstate` driver in active mode.
+
+Reboot the system after installation so the `intel_pstate=passive` kernel parameter can take effect.
+
+---
+
+### The service failed to start
+
+Check the service log:
 
 ```bash
-sudo ./install.sh --dry-run
+journalctl -u intel-pstate-governor.service
 ```
 
 ---
 
-## Safety
+### GNOME does not reboot after installation
 
-This project
+Recent versions use:
 
-- creates bootloader backups
-- stores installation state
-- can restore previous configuration
-- never modifies unsupported bootloaders
-- validates available governors
-- warns about conflicting services
+```bash
+systemctl reboot -i
+```
 
----
-
-## Tested on
-
-Hardware
-
-- Lenovo ThinkPad T590
-- Intel Core i5-8265U
-
-Distribution
-
-- CachyOS
-
-Bootloader
-
-- Limine
-
-Tests performed
-
-- Install
-- Reboot
-- Status verification
-- Uninstall
-- Reboot after uninstall
-
----
-
-## Contributing
-
-Bug reports and pull requests are welcome.
-
-If you discover a bootloader layout that is not currently supported, please open an issue and include:
-
-- distribution
-- bootloader
-- `/boot` layout
-- error message
+after explicit confirmation from the user to avoid GNOME session inhibitors preventing a requested reboot.
 
 ---
 
 ## License
 
 MIT License
-
----
-
-## Disclaimer
-
-This project **does not claim** that any governor is universally faster, cooler or more power efficient.
-
-Its purpose is simply to automate configuration and make it persistent across reboots.
-
-The most suitable governor depends on your hardware, kernel, firmware and workload.
