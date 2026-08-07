@@ -113,7 +113,29 @@ fi
 case "$ADD_PARAMETER" in
     ask)
         if kernel_parameter_active; then
-            ADD_PARAMETER=no
+            if [[ "$bootloader" == limine ]] &&
+               limine_persistent_backend_available &&
+               ! limine_default_contains_parameter /etc/default/limine; then
+                warn "$KERNEL_PARAMETER is active for this boot but is missing from /etc/default/limine."
+                warn "A Limine/kernel update may regenerate /boot/limine.conf and remove it."
+                if confirm "Make $KERNEL_PARAMETER persistent in /etc/default/limine?"; then
+                    ADD_PARAMETER=yes
+                else
+                    ADD_PARAMETER=no
+                fi
+            elif [[ "$bootloader" == systemd-boot ]] &&
+                 systemd_boot_manager_backend_available &&
+                 ! systemd_boot_manager_contains_parameter /etc/sdboot-manage.conf; then
+                warn "$KERNEL_PARAMETER is active for this boot but is missing from /etc/sdboot-manage.conf."
+                warn "sdboot-manage may regenerate loader entries and remove it during kernel/system updates."
+                if confirm "Make $KERNEL_PARAMETER persistent in LINUX_OPTIONS in /etc/sdboot-manage.conf?"; then
+                    ADD_PARAMETER=yes
+                else
+                    ADD_PARAMETER=no
+                fi
+            else
+                ADD_PARAMETER=no
+            fi
         elif [[ "$bootloader" == unknown ]]; then
             warn "Bootloader editing is unavailable; add $KERNEL_PARAMETER manually if required."
             ADD_PARAMETER=no
@@ -206,8 +228,8 @@ if [[ "$ADD_PARAMETER" == yes ]] && ! kernel_parameter_active; then
     if confirm "Would you like to reboot now?"; then
         info "Rebooting..."
         # The user has already explicitly confirmed the reboot.
-# Use -i to avoid GNOME session inhibitors blocking the reboot.
-systemctl reboot -i
+        # Use -i to avoid GNOME session inhibitors blocking the reboot.
+        systemctl reboot -i
         exit 0
     fi
     info "You can reboot later and then run ./status.sh to verify the result."

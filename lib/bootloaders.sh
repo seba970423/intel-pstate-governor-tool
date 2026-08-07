@@ -66,6 +66,50 @@ find_limine_config() {
     return 1
 }
 
+
+find_limine_persistent_config() {
+    [[ -f /etc/default/limine ]] || return 1
+    printf '%s\n' /etc/default/limine
+}
+
+limine_persistent_backend_available() {
+    [[ -f /etc/default/limine ]] || return 1
+    command -v limine-mkinitcpio >/dev/null 2>&1 ||
+        command -v limine-update >/dev/null 2>&1
+}
+
+limine_default_contains_parameter() {
+    local config="${1:-/etc/default/limine}"
+    [[ -r "$config" ]] || return 1
+    python3 - "$config" "$KERNEL_PARAMETER" <<'PYLIMINECHECK'
+import re, sys
+path, token = sys.argv[1:]
+pattern = re.compile(r'^\s*KERNEL_CMDLINE(?:\[[^]]+\])?\s*\+?=\s*(["\x27])(.*?)\1')
+with open(path, encoding='utf-8') as f:
+    for line in f:
+        if line.lstrip().startswith('#'):
+            continue
+        m = pattern.match(line.rstrip('\n'))
+        if m and token in m.group(2).split():
+            raise SystemExit(0)
+raise SystemExit(1)
+PYLIMINECHECK
+}
+
+limine_regenerate() {
+    if command -v limine-mkinitcpio >/dev/null 2>&1; then
+        run limine-mkinitcpio
+        return
+    fi
+
+    if command -v limine-update >/dev/null 2>&1; then
+        run limine-update
+        return
+    fi
+
+    die "A persistent Limine configuration was found, but neither limine-mkinitcpio nor limine-update is available."
+}
+
 find_systemd_boot_entries() {
     local directory file
     for directory in /boot/loader/entries /efi/loader/entries /boot/efi/loader/entries; do
@@ -211,18 +255,14 @@ PYGRUB
     ok "GRUB configuration restored and verified."
 }
 
-limine_add_parameter() {
+limine_add_parameter_raw() {
     local config backup tmp
 
     config=$(find_limine_config) || die "Limine configuration was not found."
-
-    # Always record the exact configuration path used by this installer,
-    # even when the parameter is already present. The uninstaller must never
-    # be left with BOOTLOADER=limine but no BOOT_CONFIG path.
     state_set BOOT_CONFIG "$config"
     state_set BOOT_CONFIG_METHOD "limine-config"
 
-    if grep -Eq "^[[:space:]]*(cmdline|kernel_cmdline):.*(^|[[:space:]])${KERNEL_PARAMETER}([[:space:]]|$)" "$config"; then
+    if limine_config_contains_parameter "$config"; then
         ok "$KERNEL_PARAMETER is already present in $config"
         state_set PARAMETER_ADDED 0
         return
@@ -253,27 +293,71 @@ limine_add_parameter() {
     install -m 0644 "$tmp" "$config"
     rm -f "$tmp"
 
-    if ! grep -Eq "^[[:space:]]*(cmdline|kernel_cmdline):.*(^|[[:space:]])${KERNEL_PARAMETER}([[:space:]]|$)" "$config"; then
+    limine_config_contains_parameter "$config" ||
         die "Failed to verify $KERNEL_PARAMETER in $config."
+
+    state_set PARAMETER_ADDED 1
+}
+
+limine_add_parameter() {
+    local config backup generated
+
+    # CachyOS and other limine-mkinitcpio based installations regenerate
+    # /boot/limine.conf from /etc/default/limine. Modify that persistent source
+    # instead of the generated output so kernel/package updates cannot erase us.
+    if ! limine_persistent_backend_available; then
+        limine_add_parameter_raw
+        return
+    fi
+
+    config=$(find_limine_persistent_config) || die "Persistent Limine configuration was not found."
+    state_set BOOT_CONFIG "$config"
+    state_set BOOT_CONFIG_METHOD "limine-default"
+
+    if limine_default_contains_parameter "$config"; then
+        ok "$KERNEL_PARAMETER is already present in $config"
+        state_set PARAMETER_ADDED 0
+        # The source may already be correct while /boot/limine.conf is stale.
+        # Regenerate so the persistent setting is applied to the boot entries.
+        limine_regenerate
+        return
+    fi
+
+    backup=$(backup_file "$config" limine-default)
+    state_set BOOT_BACKUP "$backup"
+
+    if (( DRY_RUN )); then
+        info "Would add a persistent KERNEL_CMDLINE entry for $KERNEL_PARAMETER to $config"
+        limine_regenerate
+        return
+    fi
+
+    # A separate += line is intentionally used rather than rewriting the
+    # distro's existing KERNEL_CMDLINE value. This minimizes the edit and is
+    # valid shell-array syntax used by CachyOS' Limine tooling.
+    printf '\n# Added by intel-pstate-governor\nKERNEL_CMDLINE[default]+=" %s"\n' \
+        "$KERNEL_PARAMETER" >> "$config"
+
+    limine_default_contains_parameter "$config" ||
+        die "Failed to verify $KERNEL_PARAMETER in $config."
+
+    limine_regenerate
+
+    generated=$(find_limine_config 2>/dev/null || true)
+    if [[ -n "$generated" ]] && ! limine_config_contains_parameter "$generated"; then
+        die "$KERNEL_PARAMETER was saved persistently but was not found in the regenerated Limine configuration."
     fi
 
     state_set PARAMETER_ADDED 1
 }
 
-limine_remove_parameter() {
+limine_remove_parameter_raw() {
     local config="$1" tmp removal_backup
 
-    [[ -n "$config" ]] || {
-        error "Recorded Limine config is missing: not recorded"
-        return 1
-    }
+    [[ -n "$config" ]] || { error "Recorded Limine config is missing: not recorded"; return 1; }
+    [[ -f "$config" ]] || { error "Recorded Limine config does not exist: $config"; return 1; }
 
-    [[ -f "$config" ]] || {
-        error "Recorded Limine config does not exist: $config"
-        return 1
-    }
-
-    if ! grep -Eq "^[[:space:]]*(cmdline|kernel_cmdline):.*(^|[[:space:]])${KERNEL_PARAMETER}([[:space:]]|$)" "$config"; then
+    if ! limine_config_contains_parameter "$config"; then
         ok "$KERNEL_PARAMETER is already absent from $config"
         return 0
     fi
@@ -290,24 +374,257 @@ limine_remove_parameter() {
     awk -v token="$KERNEL_PARAMETER" '
     /^[[:space:]]*(cmdline|kernel_cmdline):/ {
         out=""
-        for (i=1; i<=NF; i++) {
-            if ($i != token) out=out (out ? OFS : "") $i
-        }
+        for (i=1; i<=NF; i++) if ($i != token) out=out (out ? OFS : "") $i
         print out
         next
     }
     { print }' "$config" > "$tmp"
-
     install -m 0644 "$tmp" "$config"
     rm -f "$tmp"
 
-    if grep -Eq "^[[:space:]]*(cmdline|kernel_cmdline):.*(^|[[:space:]])${KERNEL_PARAMETER}([[:space:]]|$)" "$config"; then
+    if limine_config_contains_parameter "$config"; then
         error "$KERNEL_PARAMETER is still present in $config"
         return 1
     fi
 
     ok "Verified removal from $config"
-    return 0
+}
+
+limine_remove_parameter() {
+    local method config tmp removal_backup generated
+    method=$(state_get BOOT_CONFIG_METHOD 2>/dev/null || true)
+    config=$(state_get BOOT_CONFIG 2>/dev/null || true)
+
+    if [[ "$method" != "limine-default" ]]; then
+        limine_remove_parameter_raw "$config"
+        return
+    fi
+
+    [[ -n "$config" ]] || { error "Recorded persistent Limine config is missing."; return 1; }
+    [[ -f "$config" ]] || { error "Recorded persistent Limine config does not exist: $config"; return 1; }
+
+    if ! limine_default_contains_parameter "$config"; then
+        ok "$KERNEL_PARAMETER is already absent from $config"
+        # Regenerate anyway: a stale generated /boot/limine.conf may still
+        # contain the parameter from an older version of this tool.
+        limine_regenerate
+        return 0
+    fi
+
+    removal_backup=$(backup_file "$config" limine-default-pre-uninstall)
+    info "Pre-uninstall backup created: $removal_backup"
+
+    if (( DRY_RUN )); then
+        info "Would remove $KERNEL_PARAMETER from persistent Limine KERNEL_CMDLINE entries in $config"
+        limine_regenerate
+        return 0
+    fi
+
+    tmp=$(mktemp)
+    python3 - "$config" "$tmp" "$KERNEL_PARAMETER" <<'PYLIMINEREMOVE'
+import re, sys
+src, dst, token = sys.argv[1:]
+pattern = re.compile(r'^(\s*KERNEL_CMDLINE(?:\[[^]]+\])?\s*\+?=\s*)(["\x27])(.*?)\2(\s*(?:#.*)?)$')
+
+out = []
+with open(src, encoding='utf-8') as f:
+    for line in f:
+        raw = line.rstrip('\n')
+        m = pattern.match(raw)
+        if m and not raw.lstrip().startswith('#'):
+            words = [word for word in m.group(3).split() if word != token]
+            # Drop an empty line created solely by this tool. Otherwise keep
+            # the user's KERNEL_CMDLINE assignment and all unrelated tokens.
+            if not words and 'KERNEL_CMDLINE[default]+=' in raw:
+                continue
+            raw = f"{m.group(1)}{m.group(2)}{' '.join(words)}{m.group(2)}{m.group(4)}"
+        if raw.strip() == '# Added by intel-pstate-governor':
+            continue
+        out.append(raw)
+
+with open(dst, 'w', encoding='utf-8') as f:
+    f.write('\n'.join(out).rstrip() + '\n')
+PYLIMINEREMOVE
+    install -m 0644 "$tmp" "$config"
+    rm -f "$tmp"
+
+    if limine_default_contains_parameter "$config"; then
+        error "$KERNEL_PARAMETER is still present in $config"
+        return 1
+    fi
+
+    limine_regenerate
+
+    generated=$(find_limine_config 2>/dev/null || true)
+    if [[ -n "$generated" ]] && limine_config_contains_parameter "$generated"; then
+        error "$KERNEL_PARAMETER remains in regenerated Limine configuration: $generated"
+        return 1
+    fi
+
+    ok "Persistent Limine configuration restored and verified."
+}
+
+systemd_boot_manager_backend_available() {
+    [[ -f /etc/sdboot-manage.conf ]] || return 1
+    command -v sdboot-manage >/dev/null 2>&1
+}
+
+systemd_boot_manager_contains_parameter() {
+    local config="${1:-/etc/sdboot-manage.conf}"
+    [[ -r "$config" ]] || return 1
+    python3 - "$config" "$KERNEL_PARAMETER" <<'PYSDCHECK'
+import re, sys
+path, token = sys.argv[1:]
+pattern = re.compile(r'^\s*(?:export\s+)?LINUX_OPTIONS\s*=\s*(["\x27])(.*?)\1\s*(?:#.*)?$')
+with open(path, encoding='utf-8') as f:
+    for line in f:
+        if line.lstrip().startswith('#'):
+            continue
+        m = pattern.match(line.rstrip('\n'))
+        if m and token in m.group(2).split():
+            raise SystemExit(0)
+raise SystemExit(1)
+PYSDCHECK
+}
+
+systemd_boot_manager_regenerate() {
+    command -v sdboot-manage >/dev/null 2>&1 ||
+        die "systemd-boot-manager backend selected, but sdboot-manage is unavailable."
+    run sdboot-manage gen
+}
+
+systemd_boot_any_entry_contains_parameter() {
+    local entry
+    while IFS= read -r entry; do
+        [[ -n "$entry" ]] || continue
+        systemd_boot_entry_contains_parameter "$entry" && return 0
+    done < <(find_systemd_boot_entries)
+    return 1
+}
+
+systemd_boot_manager_add_parameter() {
+    local config=/etc/sdboot-manage.conf backup tmp
+
+    state_set BOOT_CONFIG "$config"
+    state_set BOOT_CONFIG_METHOD "sdboot-manage-conf"
+
+    if systemd_boot_manager_contains_parameter "$config"; then
+        ok "$KERNEL_PARAMETER is already present in LINUX_OPTIONS in $config"
+        state_set PARAMETER_ADDED 0
+        # The persistent source may already be correct while generated entries
+        # are stale, so regenerate them anyway.
+        systemd_boot_manager_regenerate
+        return
+    fi
+
+    backup=$(backup_file "$config" systemd-boot-manager)
+    state_set BOOT_BACKUP "$backup"
+
+    if (( DRY_RUN )); then
+        info "Would add $KERNEL_PARAMETER to LINUX_OPTIONS in $config"
+        systemd_boot_manager_regenerate
+        return
+    fi
+
+    tmp=$(mktemp)
+    python3 - "$config" "$tmp" "$KERNEL_PARAMETER" <<'PYSDADD'
+import re, sys
+src, dst, token = sys.argv[1:]
+pattern = re.compile(r'^(\s*(?:export\s+)?LINUX_OPTIONS\s*=\s*)(["\x27])(.*?)\2(\s*(?:#.*)?)$')
+changed = False
+out = []
+with open(src, encoding='utf-8') as f:
+    for line in f:
+        raw = line.rstrip('\n')
+        if not raw.lstrip().startswith('#'):
+            m = pattern.match(raw)
+            if m and not changed:
+                words = m.group(3).split()
+                if token not in words:
+                    words.append(token)
+                raw = f"{m.group(1)}{m.group(2)}{' '.join(words)}{m.group(2)}{m.group(4)}"
+                changed = True
+        out.append(raw)
+if not changed:
+    out.append(f'LINUX_OPTIONS="{token}"')
+with open(dst, 'w', encoding='utf-8') as f:
+    f.write('\n'.join(out).rstrip() + '\n')
+PYSDADD
+    install -m 0644 "$tmp" "$config"
+    rm -f "$tmp"
+
+    systemd_boot_manager_contains_parameter "$config" ||
+        die "Failed to verify $KERNEL_PARAMETER in LINUX_OPTIONS in $config."
+
+    systemd_boot_manager_regenerate
+
+    # On Type #1 entry layouts, verify that regeneration propagated the
+    # persistent option into at least one generated Linux entry.
+    if [[ -n "$(find_systemd_boot_entries 2>/dev/null | head -n1)" ]] &&
+       ! systemd_boot_any_entry_contains_parameter; then
+        die "$KERNEL_PARAMETER was saved persistently but was not found in regenerated systemd-boot entries."
+    fi
+
+    state_set PARAMETER_ADDED 1
+}
+
+systemd_boot_manager_remove_parameter() {
+    local config="${1:-/etc/sdboot-manage.conf}" tmp removal_backup
+
+    [[ -f "$config" ]] || {
+        error "Recorded systemd-boot-manager config does not exist: $config"
+        return 1
+    }
+
+    if ! systemd_boot_manager_contains_parameter "$config"; then
+        ok "$KERNEL_PARAMETER is already absent from LINUX_OPTIONS in $config"
+        systemd_boot_manager_regenerate
+        return 0
+    fi
+
+    removal_backup=$(backup_file "$config" systemd-boot-manager-before-uninstall)
+    info "Removal backup: $removal_backup"
+
+    if (( DRY_RUN )); then
+        info "Would remove $KERNEL_PARAMETER from LINUX_OPTIONS in $config and regenerate entries"
+        systemd_boot_manager_regenerate
+        return 0
+    fi
+
+    tmp=$(mktemp)
+    python3 - "$config" "$tmp" "$KERNEL_PARAMETER" <<'PYSDREMOVE'
+import re, sys
+src, dst, token = sys.argv[1:]
+pattern = re.compile(r'^(\s*(?:export\s+)?LINUX_OPTIONS\s*=\s*)(["\x27])(.*?)\2(\s*(?:#.*)?)$')
+out = []
+with open(src, encoding='utf-8') as f:
+    for line in f:
+        raw = line.rstrip('\n')
+        if not raw.lstrip().startswith('#'):
+            m = pattern.match(raw)
+            if m:
+                words = [w for w in m.group(3).split() if w != token]
+                raw = f"{m.group(1)}{m.group(2)}{' '.join(words)}{m.group(2)}{m.group(4)}"
+        out.append(raw)
+with open(dst, 'w', encoding='utf-8') as f:
+    f.write('\n'.join(out).rstrip() + '\n')
+PYSDREMOVE
+    install -m 0644 "$tmp" "$config"
+    rm -f "$tmp"
+
+    if systemd_boot_manager_contains_parameter "$config"; then
+        error "$KERNEL_PARAMETER is still present in LINUX_OPTIONS in $config"
+        return 1
+    fi
+
+    systemd_boot_manager_regenerate
+
+    if systemd_boot_any_entry_contains_parameter; then
+        error "$KERNEL_PARAMETER remains in regenerated systemd-boot entries."
+        return 1
+    fi
+
+    ok "Persistent systemd-boot configuration restored and verified."
 }
 
 kernel_cmdline_contains_parameter() {
@@ -462,6 +779,11 @@ systemd_boot_entries_remove_parameter() {
 }
 
 systemd_boot_add_parameter() {
+    if systemd_boot_manager_backend_available; then
+        systemd_boot_manager_add_parameter
+        return
+    fi
+
     local cmdline_changed=0
     local entries_changed=0
     local have_cmdline=0
@@ -554,6 +876,12 @@ systemd_boot_remove_parameter() {
     method=$(state_get BOOT_CONFIG_METHOD 2>/dev/null || true)
     config=$(state_get BOOT_CONFIG 2>/dev/null || true)
     list=$(state_get BOOT_CONFIG_LIST 2>/dev/null || true)
+
+    if [[ "$method" == "sdboot-manage-conf" ]]; then
+        systemd_boot_manager_remove_parameter "${config:-/etc/sdboot-manage.conf}"
+        return
+    fi
+
     case "$method" in
         kernel-cmdline+loader-entries)
             [[ -n "$config" ]] || { error "No recorded /etc/kernel/cmdline target."; return 1; }
@@ -598,7 +926,14 @@ recorded_bootloader_parameter_present() {
     local bootloader="$1" config list line entry
     case "$bootloader" in
         grub) config=$(state_get BOOT_CONFIG 2>/dev/null || printf /etc/default/grub); grub_config_contains_parameter "$config" ;;
-        limine) config=$(state_get BOOT_CONFIG 2>/dev/null || true); [[ -n "$config" ]] && limine_config_contains_parameter "$config" ;;
+        limine)
+            config=$(state_get BOOT_CONFIG 2>/dev/null || true)
+            if [[ "$(state_get BOOT_CONFIG_METHOD 2>/dev/null || true)" == "limine-default" ]]; then
+                [[ -n "$config" ]] && limine_default_contains_parameter "$config"
+            else
+                [[ -n "$config" ]] && limine_config_contains_parameter "$config"
+            fi
+            ;;
         refind)
             list=$(state_get BOOT_CONFIG_LIST 2>/dev/null || true)
             while IFS= read -r line; do
@@ -609,6 +944,10 @@ recorded_bootloader_parameter_present() {
             return 1 ;;
         systemd-boot)
             config=$(state_get BOOT_CONFIG 2>/dev/null || true); list=$(state_get BOOT_CONFIG_LIST 2>/dev/null || true)
+            if [[ "$(state_get BOOT_CONFIG_METHOD 2>/dev/null || true)" == "sdboot-manage-conf" ]]; then
+                systemd_boot_manager_contains_parameter "${config:-/etc/sdboot-manage.conf}"
+                return
+            fi
             [[ -n "$config" ]] && kernel_cmdline_contains_parameter "$config" && return 0
             while IFS= read -r line; do [[ -n "$line" ]] || continue; entry="${line%%|*}"; systemd_boot_entry_contains_parameter "$entry" && return 0; done <<< "$list"
             return 1 ;;
@@ -798,7 +1137,7 @@ remove_kernel_parameter() {
     local bootloader="$1"
     case "$bootloader" in
         grub) grub_remove_parameter "$(state_get BOOT_CONFIG 2>/dev/null || printf /etc/default/grub)" ;;
-        limine) limine_remove_parameter "$(state_get BOOT_CONFIG 2>/dev/null || true)" ;;
+        limine) limine_remove_parameter ;;
         refind) refind_remove_parameter "$(state_get BOOT_CONFIG_LIST 2>/dev/null || true)" ;;
         systemd-boot) systemd_boot_remove_parameter ;;
         *) error "Unsupported recorded bootloader: ${bootloader:-not recorded}"; return 1 ;;

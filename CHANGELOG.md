@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.0] - 2026-08-07
+
+### Changed
+- CachyOS systemd-boot-manager now uses `/etc/sdboot-manage.conf` as its persistent configuration source.
+- `intel_pstate=passive` is added to and removed from `LINUX_OPTIONS`, followed by `sdboot-manage gen`.
+- Existing generic `/etc/kernel/cmdline` and direct Type #1 entry support remains as a fallback for other systemd-boot layouts.
+
+### Fixed
+- Prevents CachyOS kernel/system updates from erasing `intel_pstate=passive` when `sdboot-manage` regenerates loader entries.
+- Installer detects an active-but-nonpersistent systemd-boot parameter and offers to migrate it to `LINUX_OPTIONS`.
+- `status.sh` reports systemd-boot-manager persistence state.
+
+## [0.4.0] - 2026-08-07
+
+### Changed
+- Limine now prefers `/etc/default/limine` as the persistent kernel-command-line source when supported.
+- Regenerates Limine entries with `limine-mkinitcpio`, falling back to `limine-update` where available.
+- Keeps the previous direct `limine.conf` implementation as a fallback for other Limine layouts.
+
+### Fixed
+- Prevents CachyOS kernel/package updates from silently removing `intel_pstate=passive` by regenerating `/boot/limine.conf` from an unmodified source.
+- Installer now detects when the parameter is active for the current boot but missing from persistent Limine configuration and offers to make it persistent.
+- `status.sh` reports whether the recorded Limine parameter is persistent.
+
 ## [0.3.1] - 2026-08-04
 
 ### Added

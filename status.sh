@@ -23,6 +23,11 @@ printf 'Available governors:  %s\n' "$available"
 printf 'intel_pstate mode:    %s\n' "$(intel_pstate_status)"
 printf 'Kernel parameter:     %s\n' "$(kernel_parameter_active && printf 'active' || printf 'not active')"
 printf 'Recorded bootloader:  %s\n' "$recorded_bootloader"
+if [[ "$recorded_bootloader" == limine && -f /etc/default/limine ]]; then
+    printf 'Limine persistence:   %s\n' "$(limine_default_contains_parameter /etc/default/limine && printf 'configured' || printf 'not configured')"
+elif [[ "$recorded_bootloader" == systemd-boot ]] && systemd_boot_manager_backend_available; then
+    printf 'systemd-boot persistence: %s\n' "$(systemd_boot_manager_contains_parameter /etc/sdboot-manage.conf && printf 'configured' || printf 'not configured')"
+fi
 printf 'Service enabled:      %s\n' "$service_enabled"
 printf 'Service active:       %s\n' "$service_active"
 
@@ -36,6 +41,19 @@ if [[ -n "$conflicts" ]]; then
 fi
 
 printf '\n'
+if [[ "$recorded_bootloader" == limine && -f /etc/default/limine ]] &&
+   kernel_parameter_active && ! limine_default_contains_parameter /etc/default/limine; then
+    warn "$KERNEL_PARAMETER is active but missing from persistent Limine configuration."
+    warn "Re-run install.sh to make it survive Limine/kernel regeneration."
+    printf '\n'
+elif [[ "$recorded_bootloader" == systemd-boot ]] &&
+     systemd_boot_manager_backend_available &&
+     kernel_parameter_active &&
+     ! systemd_boot_manager_contains_parameter /etc/sdboot-manage.conf; then
+    warn "$KERNEL_PARAMETER is active but missing from persistent systemd-boot-manager configuration."
+    warn "Re-run install.sh to make it survive sdboot-manage/kernel regeneration."
+    printf '\n'
+fi
 if [[ "$configured" != "not configured" &&
       "$active" == "$configured" &&
       "$service_enabled" == enabled ]]; then

@@ -1,207 +1,192 @@
-# Intel P-state Governor Tool
+# intel-pstate-governor
 
-A simple utility for Intel CPUs that automates switching the `intel_pstate` driver into **passive mode**, applies your preferred CPU frequency governor, and keeps it persistent across reboots.
+Current development release: **v0.5.0**
 
-Unlike manually editing bootloader files and system configuration, this tool detects the installed bootloader, configures it automatically, creates backups before making changes, and provides a clean uninstall process.
+A reversible Intel P-state configurator for systemd-based Linux systems.
 
----
+During installation, the script detects the governors available on every CPUFreq policy and presents a numbered menu. The selected governor is stored in `/etc/intel-pstate-governor.conf` and reapplied at boot by a systemd oneshot service.
 
-## Features
+The installer can also add `intel_pstate=passive` through a supported bootloader handler.
 
-- Automatic bootloader detection
-  - Limine
-  - GRUB
-  - systemd-boot
-  - rEFInd
-- Adds or removes the `intel_pstate=passive` kernel parameter
-- Switches Intel P-state into passive mode
-- Lets you choose your preferred governor
-- Creates a systemd service that reapplies the governor at every boot
-- Creates backups before modifying bootloader configuration
-- Verifies changes during installation and uninstallation
-- Interactive installer and uninstaller
-- Includes a status utility to display the current CPU governor configuration
+## Supported in v0.2.0
 
----
-
-## Supported Governors
-
-The tool automatically detects which governors are available on your system.
-
-Examples:
-
-- ondemand
-- schedutil
-- performance
-- powersave
-- conservative
-- userspace
-
----
-
-## Supported Bootloaders
-
-The installer automatically detects and configures:
-
-- Limine
+- Intel x86_64 CPUs
+- systemd
 - GRUB
-- systemd-boot
-- rEFInd
+- Limine
+- CachyOS systemd-boot-manager using persistent `LINUX_OPTIONS` in `/etc/sdboot-manage.conf`
+- Generic systemd-boot using `/etc/kernel/cmdline` or plain Type #1 entries as fallbacks
+- Interactive governor selection
+- `--governor NAME`
+- Dry-run mode
+- State-aware uninstall
+- Conflict detection
+- Status reporting
 
-No manual bootloader editing is required.
+Unknown bootloader layouts are refused rather than guessed.
 
----
-
-## Installation
-
-Clone the repository:
+## Install
 
 ```bash
 git clone https://github.com/seba970423/intel-pstate-governor-tool.git
-cd intel-pstate-governor-tool
-```
-
-Run the installer:
-
-```bash
+cd intel-pstate-governor
+sudo ./install.sh --dry-run
 sudo ./install.sh
 ```
 
-The installer will:
+Example menu:
 
-- Detect your bootloader
-- Detect available governors
-- Ask which governor you want to use
-- Add the `intel_pstate=passive` kernel parameter (if needed)
-- Install the persistent systemd service
-- Create backups of modified bootloader configuration
-- Offer to reboot the system
+```text
+Available governors
+  1. conservative
+  2. ondemand
+  3. performance
+  4. powersave
+  5. schedutil
 
----
+Select a governor [2]:
+```
+
+Non-interactive selection:
+
+```bash
+sudo ./install.sh --governor ondemand
+```
+
+Fully non-interactive:
+
+```bash
+sudo ./install.sh --kernel-parameter --governor ondemand --yes
+```
+
+Only governors available on every detected CPUFreq policy are accepted.
 
 ## Status
-
-You can check the current configuration at any time:
 
 ```bash
 ./status.sh
 ```
 
-Example output:
+Output includes:
 
-```
-Intel P-state Governor Status
+- configured governor;
+- active governor;
+- common available governors;
+- scaling driver;
+- Intel P-state mode;
+- kernel parameter status;
+- service state;
+- possible conflicting services.
 
-Scaling driver:      intel_cpufreq
-Configured governor: ondemand
-Active governor:     ondemand
-intel_pstate mode:   passive
-Kernel parameter:    active
-Recorded bootloader: limine
-Service enabled:     enabled
-Service active:      active
-```
-
----
-
-## Uninstallation
-
-Run:
+## Uninstall
 
 ```bash
 sudo ./uninstall.sh
 ```
 
-The uninstaller will:
-
-- Restore the original bootloader configuration
-- Remove the `intel_pstate=passive` kernel parameter (if it was added by the installer)
-- Remove the systemd service
-- Remove installed files
-- Verify the bootloader configuration
-- Offer to reboot
-
----
-
-## Requirements
-
-- Intel CPU
-- Linux with systemd
-- Root privileges
-- Supported bootloader
-
----
-
-## Notes
-
-This tool only manages Intel P-state passive mode.
-
-It does **not**:
-
-- modify CPU frequencies manually
-- overclock your processor
-- disable turbo boost
-- change BIOS settings
-
----
-
-## Tested On
-
-Desktop Environments
-
-- KDE Plasma
-- GNOME
-
-Bootloaders
-
-- Limine
-- GRUB
-- systemd-boot
-- rEFInd
-
-Distributions
-
-- CachyOS
-
-CPU Families
-
-- Intel Core i5-8265U
-- Intel Core i5-10400
-
----
-
-## Troubleshooting
-
-### The selected governor is unavailable
-
-Your system is probably still using the `intel_pstate` driver in active mode.
-
-Reboot the system after installation so the `intel_pstate=passive` kernel parameter can take effect.
-
----
-
-### The service failed to start
-
-Check the service log:
+Preview removal:
 
 ```bash
-journalctl -u intel-pstate-governor.service
+sudo ./uninstall.sh --dry-run
 ```
 
----
-
-### GNOME does not reboot after installation
-
-Recent versions use:
+Purge state and backups:
 
 ```bash
-systemctl reboot -i
+sudo ./uninstall.sh --purge-state
 ```
 
-after explicit confirmation from the user to avoid GNOME session inhibitors preventing a requested reboot.
+## Installed files
 
----
+```text
+/etc/intel-pstate-governor.conf
+/etc/systemd/system/intel-pstate-governor.service
+/usr/local/libexec/intel-pstate-governor/apply-governor
+/var/lib/intel-pstate-governor/
+/var/log/intel-pstate-governor.log
+```
+
+## Important
+
+This project does not promise higher FPS, lower latency, improved thermals or better battery life. It automates a configuration choice. Results depend on CPU, firmware, kernel and workload.
 
 ## License
 
-MIT License
+MIT
+
+
+## Upgrading an existing v0.2.0 installation
+
+v0.2.0 created the state file as root-only. To let the updated `status.sh` read the recorded bootloader without reinstalling:
+
+```bash
+sudo chmod 0644 /var/lib/intel-pstate-governor/state
+```
+
+A fresh v0.2.1 installation applies this permission automatically.
+
+
+## systemd-boot notes
+
+On CachyOS installations that provide `systemd-boot-manager`, the tool uses:
+
+```text
+/etc/sdboot-manage.conf
+```
+
+and adds `intel_pstate=passive` to the persistent `LINUX_OPTIONS` value. It then runs:
+
+```bash
+sdboot-manage gen
+```
+
+to regenerate the Boot Loader Specification entries. This prevents kernel or system updates from erasing the parameter when the entries are rebuilt.
+
+For other systemd-boot layouts, the previous generic `/etc/kernel/cmdline` and Type #1 loader-entry backends remain available as fallbacks.
+
+## Transactional uninstall
+
+v0.2.9 restores and verifies the recorded bootloader configuration before removing installed files or state. Failed restoration preserves recovery information.
+
+
+## v0.3.0 state-management correction
+
+The Limine handler now always records the exact configuration file it uses:
+
+```text
+BOOTLOADER=limine
+BOOT_CONFIG=/path/to/limine.conf
+BOOT_CONFIG_METHOD=limine-config
+PARAMETER_ADDED=0|1
+```
+
+The uninstaller refuses to guess a missing path, creates a pre-uninstall backup,
+removes only the exact `intel_pstate=passive` token, and verifies the token is
+gone before deleting project state.
+
+
+## rEFInd support
+
+rEFInd detection is added after the existing systemd-boot, GRUB, and Limine
+checks. It recognizes CachyOS installations with the ESP mounted at `/boot`,
+including `/boot/EFI/refind/refind_x64.efi`, and falls back to EFI variables.
+
+The tool edits discovered `refind_linux.conf` files, creates backups, records
+every modified path, and verifies both installation and removal.
+
+
+## Limine persistence (v0.4.0)
+
+On Limine installations that provide `/etc/default/limine` together with
+`limine-mkinitcpio` or `limine-update`, the tool now writes
+`intel_pstate=passive` to the persistent `KERNEL_CMDLINE` source and then
+regenerates the Limine boot configuration. This prevents kernel/package
+updates from erasing the parameter when `/boot/limine.conf` is regenerated.
+
+For other Limine layouts, the previous direct `limine.conf` backend remains
+available as a fallback. GRUB, systemd-boot, and rEFInd behavior is unchanged.
+
+
+## systemd-boot-manager persistence (v0.5.0)
+
+CachyOS `sdboot-manage` generates loader entries from `LINUX_OPTIONS` in `/etc/sdboot-manage.conf`. v0.5.0 therefore treats that file as the persistent source of truth instead of editing generated loader entries or `/etc/kernel/cmdline` first. The uninstaller removes only the exact `intel_pstate=passive` token from `LINUX_OPTIONS`, regenerates entries, and verifies removal.
