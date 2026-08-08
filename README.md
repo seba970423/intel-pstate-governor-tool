@@ -25,6 +25,13 @@ The installer can also add `intel_pstate=passive` through a supported bootloader
 
 Unknown bootloader layouts are refused rather than guessed.
 
+## Compatibility
+
+Limine — tested across system/kernel updates; persistence validated on both desktop and laptop.
+systemd-boot — persistence validated across updates.
+GRUB — validated on Linux Mint, including a kernel update + reboot.
+rEFInd — validated by installing and booting an entirely new kernel (linux-cachyos-rc); intel_pstate=passive carried over correctly.
+
 ## Install
 
 ```bash
