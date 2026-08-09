@@ -26,10 +26,7 @@ Unknown bootloader layouts are refused rather than guessed.
 
 ## Compatibility
 
-Limine — survives kernel upgrades with persistent intel_pstate passive kernel parameter.
-systemd-boot — survives kernel upgrades with persistent intel_pstate passive kernel parameter as well.
-GRUB
-rEFInd
+Limine, system-d boot, Grub and rEFInd.
 
 ## Install
 
