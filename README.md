@@ -117,10 +117,6 @@ sudo ./uninstall.sh --purge-state
 
 This project does not promise higher FPS, lower latency, improved thermals or better battery life. It automates a configuration choice. Results depend on CPU, firmware, kernel and workload.
 
-## License
-
-MIT
-
 
 ## Upgrading an existing v0.2.0 installation
 
@@ -197,3 +193,7 @@ available as a fallback. GRUB, systemd-boot, and rEFInd behavior is unchanged.
 ## systemd-boot-manager persistence (v0.5.0)
 
 CachyOS `sdboot-manage` generates loader entries from `LINUX_OPTIONS` in `/etc/sdboot-manage.conf`. v0.5.0 therefore treats that file as the persistent source of truth instead of editing generated loader entries or `/etc/kernel/cmdline` first. The uninstaller removes only the exact `intel_pstate=passive` token from `LINUX_OPTIONS`, regenerates entries, and verifies removal.
+
+## License
+
+MIT
