@@ -28,6 +28,11 @@ Unknown bootloader layouts are refused rather than guessed.
 
 Limine, system-d boot, Grub and rEFInd.
 
+## Preview Install
+```bash
+sudo ./install.sh --dry-run
+```
+
 ## Install
 
 ```bash
