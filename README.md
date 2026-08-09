@@ -1,6 +1,5 @@
 # intel-pstate-governor
 
-Current development release: **v0.5.0**
 
 A reversible Intel P-state configurator for systemd-based Linux systems.
 
