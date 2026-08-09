@@ -33,7 +33,6 @@ Limine, system-d boot, Grub and rEFInd.
 ```bash
 git clone https://github.com/seba970423/intel-pstate-governor-tool.git
 cd intel-pstate-governor
-sudo ./install.sh --dry-run
 sudo ./install.sh
 ```
 
